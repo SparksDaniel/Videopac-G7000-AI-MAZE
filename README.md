@@ -50,6 +50,8 @@ build_maze_line_42.cmd
 The script regenerates and verifies all 31 levels, assembles the cartridge,
 and checks that the resulting ROM is exactly 4096 bytes.
 
+The console BIOS is **not** required to build the cartridge ROM.
+
 For a quicker verification without regenerating the levels:
 
 ```bat
@@ -59,8 +61,12 @@ node tools\assemble.js maze_line_42.a48 roms\ai-maze-42-31levels.rom --4k
 
 ## Running in O2EM 1.18
 
-O2EM and the console BIOS are not included. Set `O2EM_DIR` to your local O2EM
-directory and run the launcher:
+O2EM and the copyrighted console BIOS are not included in this repository.
+Although no BIOS is needed during the build, O2EM requires a legally obtained
+Videopac/Odyssey² BIOS image to run the game. For the standard European setup,
+place `o2rom.bin` in O2EM's `BIOS` directory.
+
+Set `O2EM_DIR` to your local O2EM directory and run the launcher:
 
 ```bat
 set O2EM_DIR=C:\Emulators\o2em118win
