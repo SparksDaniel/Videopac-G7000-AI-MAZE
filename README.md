@@ -15,6 +15,14 @@ The game and its project code were developed entirely by ChatGPT/Codex,
 following the instructions, design decisions, feedback, and emulator testing
 provided by the owner of this GitHub repository.
 
+## Source code
+
+The complete Intel 8048 game source is available in
+[`maze_line_42.a48`](maze_line_42.a48). The repository also includes the
+[`assembler`](tools/assemble.js), deterministic
+[`level generator`](tools/generate_maze_levels_42.js), and
+[`level verifier`](tools/verify_maze_levels_42.js) used to build the ROM.
+
 ## Playing
 
 - Use joystick 1 to move through an open passage.
@@ -81,12 +89,12 @@ configuration has not been tested.
 
 ## Repository contents
 
-- `maze_line_42.a48` — Intel 8048 source code.
-- `roms/levels_31_7x6.bin` — packed level data used by the cartridge.
-- `roms/levels_31_7x6.txt` — level metrics and solution paths.
-- `tools/generate_maze_levels_42.js` — deterministic level generator.
-- `tools/verify_maze_levels_42.js` — structural and unique-solution verifier.
-- `tools/assemble.js` — two-pass assembler used by the build.
-- `SPEC_7X6.md` — technical specification and memory layout.
+- [`maze_line_42.a48`](maze_line_42.a48) — Intel 8048 source code.
+- [`roms/levels_31_7x6.bin`](roms/levels_31_7x6.bin) — packed level data used by the cartridge.
+- [`roms/levels_31_7x6.txt`](roms/levels_31_7x6.txt) — level metrics and solution paths.
+- [`tools/generate_maze_levels_42.js`](tools/generate_maze_levels_42.js) — deterministic level generator.
+- [`tools/verify_maze_levels_42.js`](tools/verify_maze_levels_42.js) — structural and unique-solution verifier.
+- [`tools/assemble.js`](tools/assemble.js) — two-pass assembler used by the build.
+- [`SPEC_7X6.md`](SPEC_7X6.md) — technical specification and memory layout.
 
 The game image above is an O2EM 1.18 snapshot of the PAL cartridge.
