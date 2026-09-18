@@ -56,6 +56,12 @@ run_7x6_o2em118.cmd
 The launcher maps the arrow keys to movement and `Space` to the joystick
 button. Press `F8` in O2EM to save a numbered BMP snapshot in `docs/images`.
 
+## Video standard
+
+AI-MAZE is developed and tested for European PAL hardware at 50 Hz. Its
+raster-timed reuse of the character objects is PAL-specific. NTSC is not a
+supported target, and the French SECAM/C52 configuration has not been tested.
+
 ## Repository contents
 
 - `maze_line_42.a48` — Intel 8048 source code.
@@ -66,5 +72,4 @@ button. Press `F8` in O2EM to save a numbered BMP snapshot in `docs/images`.
 - `tools/assemble.js` — two-pass assembler used by the build.
 - `SPEC_7X6.md` — technical specification and memory layout.
 
-The game image above is rendered directly from the cartridge's level data to
-show the in-game layout and palette.
+The game image above is an O2EM 1.18 snapshot of the PAL cartridge.
