@@ -54,7 +54,7 @@ run_7x6_o2em118.cmd
 ```
 
 The launcher maps the arrow keys to movement and `Space` to the joystick
-button.
+button. Press `F8` in O2EM to save a numbered BMP snapshot in `docs/images`.
 
 ## Repository contents
 

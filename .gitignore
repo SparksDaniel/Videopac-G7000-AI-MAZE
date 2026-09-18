@@ -12,3 +12,6 @@ o2em_def.cfg
 **/bin/
 **/obj/
 **/publish/
+
+# Local screenshots; choose and convert the final image before committing it.
+docs/images/ai-maze-snapshot*.bmp
