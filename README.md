@@ -9,6 +9,12 @@ without visiting a cell twice.
 The cartridge contains 31 deterministic and uniquely solvable levels. The
 selected mazes are ordered by the generator's composite difficulty score.
 
+## Development
+
+The game and its project code were developed entirely by ChatGPT/Codex,
+following the instructions, design decisions, feedback, and emulator testing
+provided by the owner of this GitHub repository.
+
 ## Playing
 
 - Use joystick 1 to move through an open passage.
