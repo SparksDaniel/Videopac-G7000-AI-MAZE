@@ -58,9 +58,11 @@ button. Press `F8` in O2EM to save a numbered BMP snapshot in `docs/images`.
 
 ## Video standard
 
-AI-MAZE is developed and tested for European PAL hardware at 50 Hz. Its
-raster-timed reuse of the character objects is PAL-specific. NTSC is not a
-supported target, and the French SECAM/C52 configuration has not been tested.
+AI-MAZE is developed for European PAL hardware at 50 Hz. So far, the game has
+only been tested in O2EM 1.18 and has not yet been verified on a physical
+Videopac G7000 console. Its raster-timed reuse of the character objects is
+PAL-specific. NTSC is not a supported target, and the French SECAM/C52
+configuration has not been tested.
 
 ## Repository contents
 
