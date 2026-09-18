@@ -1,0 +1,1461 @@
+; AI-MAZE 42 - raster-multiplexed 7x6 one-line puzzle
+; Philips Videopac G7000 / Magnavox Odyssey2 (PAL)
+;
+; Seven physical character objects are reused on alternating raster rows.
+; This produces 42 logical filled cells while the VDC grid remains available
+; for thin maze walls. Cell display states: 0=empty, 1=visited, 2=current.
+
+        cpu 8048
+
+        ; Compact XROM data area: 31 records x 22 bytes.
+        org 0000h
+        incbin "roms/levels_31_7x6.bin"
+
+irq             equ 0009h
+vsyncirq        equ 001ah
+soundirq        equ 0044h
+playsound       equ 01a2h
+gfxoff          equ 011ch
+gfxon           equ 0127h
+clearchar       equ 016bh
+selectgame      equ 02c3h
+getjoystick     equ 038fh
+waitvsync       equ 0176h
+waitforkey      equ 013dh
+scankey         equ 00b0h
+tablebcdbyte    equ 017ch
+putchar23       equ 0261h
+vdcenable       equ 00e7h
+extramenable    equ 00ech
+
+key_enter       equ 02fh       ; keyboard matrix row 5, column 7
+
+spr0_ctrl       equ 000h
+spr1_ctrl       equ 004h
+spr2_ctrl       equ 008h
+char0_ctrl      equ 010h
+char4_ctrl      equ 020h
+char5_ctrl      equ 024h
+spr0_shape      equ 080h
+spr1_shape      equ 088h
+spr2_shape      equ 090h
+vdc_control     equ 0a0h
+vdc_color       equ 0a3h
+vdc_sound0      equ 0a7h
+vdc_soundctrl   equ 0aah
+hgrid0          equ 0c1h
+vgrid0          equ 0e1h
+
+; Internal RAM. RB1 occupies 18h-1fh; BIOS owns 3dh-3fh.
+cursor_pos      equ 020h
+cursor_x        equ 021h
+cursor_y        equ 022h
+visited         equ 023h
+visited_color   equ 024h
+irq_saved_a     equ 025h
+irq_saved_p1    equ 026h
+select_timer    equ 02dh
+selected_tens   equ 02eh
+selected_level  equ 02fh
+mux_phase       equ 030h
+mux_active      equ 031h
+record_lo       equ 032h
+record_hi       equ 033h
+work_lo         equ 034h
+work_hi         equ 035h
+level_number    equ 036h
+score_lo        equ 037h
+score_hi        equ 038h
+level_hundred   equ 039h       ; 1 while the level is still worth 100 points
+level_start     equ 03ah
+level_points    equ 03bh       ; packed BCD 95..10 after the first restart
+sound_active    equ 03ch
+
+; External RAM layout.
+state_base      equ 000h       ; 42 display-state bytes
+mask_base       equ 02ah       ; 42 movement-mask bytes
+
+grid_x0         equ 01dh       ; cell symbols/cursor shifted one pixel right
+grid_y0         equ 034h
+
+        org 0400h
+        jmp boot
+        jmp irq
+        jmp timer_irq
+        jmp my_vsync
+        jmp start
+        jmp soundirq
+
+start:
+        ; Dispatch through free upper-ROM space so the extra Enter handling
+        ; does not move the page-sensitive raster renderer below.
+        sel mb1
+        jmp start_dispatch
+
+        org 0423h
+main_loop:
+        call waitvsync
+        mov r1,#000h
+        call getjoystick
+        jf0 fire_reset
+        jmp read_stick
+fire_reset:
+        sel mb1
+        call penalize_restart
+        call restart_maze
+fire_release:
+        call waitvsync
+        mov r1,#000h
+        call getjoystick
+        jf0 fire_release
+        jmp main_loop
+
+read_stick:
+        mov a,r2
+        orl a,r3
+        jnz stick_active
+        mov r7,#001h
+        jmp main_loop
+stick_active:
+        mov a,r7
+        jnz accept_stick
+        jmp main_loop
+
+accept_stick:
+        mov r7,#000h
+        mov a,r2
+        jnz horizontal
+        mov a,r3
+        inc a
+        jz want_up
+        jmp want_down
+horizontal:
+        inc a
+        jz want_left
+        jmp want_right
+
+want_up:
+        mov r6,#001h
+        mov r5,#0f9h           ; -7
+        jmp test_exit
+want_right:
+        mov r6,#002h
+        mov r5,#001h
+        jmp test_exit
+want_down:
+        mov r6,#004h
+        mov r5,#007h
+        jmp test_exit
+want_left:
+        mov r6,#008h
+        mov r5,#0ffh
+
+test_exit:
+        call extramenable
+        mov r0,#cursor_pos
+        mov a,@r0
+        add a,#mask_base
+        mov r0,a
+        movx a,@r0
+        anl a,r6
+        jnz exit_open
+        jmp invalid_move
+
+exit_open:
+        mov r0,#cursor_pos
+        mov a,@r0
+        add a,r5
+        mov r5,a
+        mov r0,a
+        movx a,@r0
+        jz unvisited_cell
+invalid_move:
+        sel mb1
+        call handle_invalid
+        jmp main_loop
+
+unvisited_cell:
+        ; Previous current cell becomes cyan visited state.
+        mov r0,#cursor_pos
+        mov a,@r0
+        mov r0,a
+        mov a,#001h
+        movx @r0,a
+        ; Candidate becomes white current state.
+        mov a,r5
+        mov r0,a
+        mov a,#002h
+        movx @r0,a
+
+        mov r0,#cursor_pos
+        mov a,r5
+        mov @r0,a
+        mov a,r6
+        xrl a,#001h
+        jz apply_up
+        mov a,r6
+        xrl a,#002h
+        jz apply_right
+        mov a,r6
+        xrl a,#004h
+        jz apply_down
+apply_left:
+        mov r0,#cursor_x
+        mov a,@r0
+        dec a
+        mov @r0,a
+        jmp moved
+apply_up:
+        mov r0,#cursor_y
+        mov a,@r0
+        dec a
+        mov @r0,a
+        jmp moved
+apply_right:
+        mov r0,#cursor_x
+        mov a,@r0
+        inc a
+        mov @r0,a
+        jmp moved
+apply_down:
+        mov r0,#cursor_y
+        mov a,@r0
+        inc a
+        mov @r0,a
+
+moved:
+        mov r0,#visited
+        mov a,@r0
+        inc a
+        mov @r0,a
+        mov r5,a
+        call draw_cursor
+        mov a,r5
+        xrl a,#02ah
+        jz maze_complete
+        jmp main_loop
+
+maze_complete:
+        sel mb1
+        call add_level_score
+        call gfxoff
+        call draw_quad_status
+        call gfxon
+        sel mb1
+        call sound_select_standard
+        mov r1,#064h
+complete_pause:
+        call waitvsync
+        djnz r1,complete_pause
+        sel rb1
+        sel mb0
+        call advance_level
+        call new_maze
+        jmp main_loop
+
+new_maze:
+        mov r0,#level_hundred
+        mov a,#001h
+        mov @r0,a
+        mov r0,#level_points
+        mov a,#000h
+        mov @r0,a
+        mov r0,#visited_color
+        mov a,#00dh            ; normal cyan visited cells; current is XOR 2
+        mov @r0,a
+restart_maze:
+        mov r0,#sound_active
+        mov a,#000h
+        mov @r0,a
+        mov r0,#mux_active
+        mov a,#000h
+        mov @r0,a
+        ; A restart may begin just after VSYNC scheduled the row multiplexer.
+        ; Stop that chain before rebuilding external state, otherwise the
+        ; transient cell-zero state can be rendered for part of one frame.
+        dis tcnti
+        stop tcnt
+        jtf restart_timer_clear
+restart_timer_clear:
+        call gfxoff
+        sel mb1
+        call stop_bios_sound
+        call clearchar
+
+        ; Chars 0-4 hold the first five title letters. Chars 5-11 are
+        ; multiplexed through all six maze rows; sprite 2 draws the title E.
+        mov r0,#char5_ctrl
+        call init_char_group
+
+        ; White diamond cursor.
+        mov r0,#spr0_shape
+        mov a,#018h
+        movx @r0,a
+        inc r0
+        mov a,#03ch
+        movx @r0,a
+        inc r0
+        mov a,#07eh
+        movx @r0,a
+        inc r0
+        mov a,#0ffh
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        mov a,#07eh
+        movx @r0,a
+        inc r0
+        mov a,#03ch
+        movx @r0,a
+        inc r0
+        mov a,#018h
+        movx @r0,a
+
+        ; Black background, bright yellow maze walls.
+        mov r0,#vdc_color
+        mov a,#046h
+        movx @r0,a
+
+        ; Clear all 42 display states. load_level marks only the real start.
+        call extramenable
+        mov r0,#state_base
+        mov r1,#02ah
+        mov a,#000h
+clear_states:
+        movx @r0,a
+        inc r0
+        djnz r1,clear_states
+
+        ; Load this level's packed XROM grid and movement masks.
+        call load_level
+        mov r0,#visited
+        mov a,#001h
+        mov @r0,a
+        mov r7,#000h
+
+        call draw_quad_status
+        mov r0,#mux_active
+        mov a,#001h
+        mov @r0,a
+        call gfxon
+        call vdcenable
+        mov r0,#vdc_control
+        mov a,#028h            ; grid + objects; sound IRQ disabled
+        movx @r0,a
+        call draw_cursor
+        ret
+
+draw_quad_status:
+        ; Quad 0/1 interleave the four score digits at 8-pixel intervals.
+        ; Quad 2 holds the two level digits. No clock/colon objects are used.
+        call vdcenable
+        mov r4,#0c8h
+        mov r0,#040h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#020h
+        movx @r0,a
+        mov r0,#050h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#028h
+        movx @r0,a
+        mov r0,#060h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#078h
+        movx @r0,a
+        mov r0,#070h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#080h
+        movx @r0,a
+
+        ; A positioned quad exposes all four sub-characters. Initialise all
+        ; sixteen score/level sub-characters in quads 0-3 to the blank glyph.
+        mov r0,#042h
+        mov r2,#010h
+quad_blank_loop:
+        mov r5,#00ch
+        call put_status_char
+        ; putchar23 has already advanced R0 by two bytes; two more reaches
+        ; the next sub-quad's byte-2 register (a four-byte control block).
+        inc r0
+        inc r0
+        djnz r2,quad_blank_loop
+
+        mov r0,#score_hi
+        mov a,@r0
+        mov r7,a
+        swap a
+        anl a,#00fh
+        mov r5,a
+        mov r0,#042h
+        call put_status_char
+        mov a,r7
+        anl a,#00fh
+        mov r5,a
+        mov r0,#052h
+        call put_status_char
+        mov r0,#score_lo
+        mov a,@r0
+        mov r7,a
+        swap a
+        anl a,#00fh
+        mov r5,a
+        mov r0,#046h
+        call put_status_char
+        mov a,r7
+        anl a,#00fh
+        mov r5,a
+        mov r0,#056h
+        call put_status_char
+
+        mov r0,#level_number
+        mov a,@r0
+        mov r7,a
+        swap a
+        anl a,#00fh
+        mov r5,a
+        mov r0,#062h
+        call put_status_char
+        mov a,r7
+        anl a,#00fh
+        mov r5,a
+        mov r0,#072h
+        call put_status_char
+        sel mb1
+        jmp draw_title         ; tail call; title returns in MB0
+
+put_status_char:
+        mov r6,#00eh          ; putchar23 consumes/transforms R6
+        call putchar23
+        ret
+
+init_char_group:
+        mov r7,#007h
+        mov r2,#grid_x0
+init_char_loop:
+        mov a,#0f8h
+        movx @r0,a
+        inc r0
+        mov a,r2
+        movx @r0,a
+        add a,#010h
+        mov r2,a
+        inc r0
+        inc r0
+        inc r0
+        djnz r7,init_char_again
+        ret
+init_char_again:
+        jmp init_char_loop
+
+draw_cursor:
+        call gfxoff
+        call vdcenable
+        mov r0,#spr0_ctrl
+        mov r1,#cursor_y
+        mov a,@r1
+        mov r2,a
+        rl a
+        add a,r2
+        rl a
+        rl a
+        rl a
+        add a,#grid_y0
+        movx @r0,a
+        inc r0
+        mov r1,#cursor_x
+        mov a,@r1
+        rl a
+        rl a
+        rl a
+        rl a
+        add a,#grid_x0
+        movx @r0,a
+        inc r0
+        mov a,#038h
+        movx @r0,a
+        call gfxon
+        ret
+
+; VSYNC hook: schedule a first timer IRQ safely inside PAL VBLANK.
+my_vsync:
+        nop
+        nop
+        nop
+        mov r0,#mux_active
+        mov a,@r0
+        jnz mux_start
+        jmp vsyncirq
+mux_start:
+        ; The BIOS tune has ended before gameplay, so keep the sound hardware
+        ; hard-muted once per frame unless an intentional tune is active.
+        mov r0,#sound_active
+        mov a,@r0
+        jnz mux_sound_ready
+        mov r0,#vdc_soundctrl
+        mov a,#000h
+        movx @r0,a
+mux_sound_ready:
+        mov r0,#mux_phase
+        mov a,#000h
+        mov @r0,a
+        mov a,#0f0h           ; 16 HSYNCs into VBLANK
+        mov t,a
+        strt cnt
+        en tcnti
+        jmp vsyncirq
+
+timer_irq:
+        sel rb0
+        mov r0,#irq_saved_a
+        mov @r0,a
+        in a,p1
+        inc r0
+        mov @r0,a
+        mov r0,#visited_color
+        mov a,@r0
+        mov r5,a
+        xrl a,#002h
+        mov r6,a
+        ; Only the first overflow enters an interrupt.  The remaining raster
+        ; positions are chained here with JTF, so they cannot be lost because
+        ; an emulator fails to re-enter the timer interrupt in the same frame.
+        dis tcnti
+        stop tcnt
+        jtf mux_flag_clear
+mux_flag_clear:
+        call mux_begin
+        call row0
+        call mux_end
+        mov a,#0d2h           ; compensate for the seventh rendered character
+        mov t,a
+        strt cnt
+mux_wait1:
+        jtf mux_row1
+        jmp mux_wait1
+mux_row1:
+        stop tcnt
+        call mux_begin
+        call row1
+        call mux_end
+        mov a,#0f4h
+        mov t,a
+        strt cnt
+mux_wait2:
+        jtf mux_row2
+        jmp mux_wait2
+mux_row2:
+        stop tcnt
+        call mux_begin
+        call row2
+        call mux_end
+        mov a,#0f4h           ; seventh character adds roughly two scanlines
+        mov t,a
+        strt cnt
+mux_wait3:
+        jtf mux_row3
+        jmp mux_wait3
+mux_row3:
+        stop tcnt
+        call mux_begin
+        call row3
+        call mux_end
+        mov a,#0f6h           ; update visual row 5 two scanlines earlier
+        mov t,a
+        strt cnt
+mux_wait4:
+        jtf mux_row4
+        jmp mux_wait4
+mux_row4:
+        stop tcnt
+        call mux_begin
+        call row4
+        call mux_end
+        mov a,#0f8h           ; update row 6 four lines earlier than before
+        mov t,a
+        strt cnt
+mux_wait5:
+        jtf mux_row5
+        jmp mux_wait5
+mux_row5:
+        stop tcnt
+        call mux_begin
+        call row5
+        call mux_end
+mux_restore:
+        mov r0,#irq_saved_p1
+        mov a,@r0
+        outl p1,a
+        mov r0,#irq_saved_a
+        mov a,@r0
+        retr
+
+mux_begin:
+        ; Exclusive VDC access, hide foreground while registers change.
+        orl p1,#0bch
+        anl p1,#0b7h
+        mov r0,#vdc_control
+        mov a,#008h            ; grid only; sound IRQ disabled
+        movx @r0,a
+        ; Dual mode: read external RAM while writes go to the VDC.
+        orl p1,#0fch
+        anl p1,#0e7h
+        ret
+
+mux_end:
+        orl p1,#0bch
+        anl p1,#0b7h
+        mov r0,#vdc_control
+        mov a,#028h
+        movx @r0,a
+        ret
+
+row0:
+        mov r0,#000h
+        mov r1,#char5_ctrl
+        mov r2,#034h
+        mov r4,#06eh
+        jmp render_seven
+row1:
+        mov r0,#007h
+        mov r1,#char5_ctrl
+        mov r2,#04ch
+        mov r4,#062h
+        jmp render_seven
+row2:
+        mov r0,#00eh
+        mov r1,#char5_ctrl
+        mov r2,#064h
+        mov r4,#056h
+        jmp render_seven
+row3:
+        mov r0,#015h
+        mov r1,#char5_ctrl
+        mov r2,#07ch
+        mov r4,#04ah
+        jmp render_seven
+row4:
+        mov r0,#01ch
+        mov r1,#char5_ctrl
+        mov r2,#094h
+        mov r4,#03eh
+        jmp render_seven
+row5:
+        mov r0,#023h
+        mov r1,#char5_ctrl
+        mov r2,#0ach
+        mov r4,#032h
+
+render_seven:
+        mov r7,#007h
+render_cell:
+        movx a,@r0
+        jz render_hidden
+        xrl a,#002h
+        jz render_current
+        mov a,r5               ; current celebration/normal visited colour
+        mov r3,a
+        mov a,r2
+        jmp render_write
+render_current:
+        mov a,r6               ; contrasting current-cell colour
+        mov r3,a
+        mov a,r2
+        jmp render_write
+render_hidden:
+        mov a,r5
+        mov r3,a
+        mov a,#0f8h
+        ; Equalise this path with XRL + JZ + JMP in the coloured paths.
+        nop
+        nop
+        nop
+        nop
+        nop
+        nop
+render_write:
+        movx @r1,a
+        inc r1
+        inc r1
+        mov a,r4
+        movx @r1,a
+        inc r1
+        mov a,r3
+        movx @r1,a
+        inc r1
+        inc r0
+        djnz r7,render_continue
+        ret
+render_continue:
+        jmp render_cell
+
+        org 0720h
+advance_level:
+        mov r0,#level_number
+        mov a,@r0
+        xrl a,#031h
+        jz advance_done
+        mov a,@r0
+        add a,#001h
+        da a
+        mov @r0,a
+        mov r0,#record_lo
+        mov a,@r0
+        add a,#016h
+        mov @r0,a
+        jc advance_high
+        ret
+advance_high:
+        inc r0
+        mov a,@r0
+        inc a
+        mov @r0,a
+advance_done:
+        ret
+
+load_level:
+        ; Clear every grid segment outside the 7x6 maze before loading it.
+        ; This prevents remnants from SELECT GAME or the previous level from
+        ; appearing beyond the maze's outer boundary.
+        call clear_outer_grid
+        mov r0,#record_lo
+        mov a,@r0
+        mov r1,#work_lo
+        mov @r1,a
+        inc r0
+        inc r1
+        mov a,@r0
+        mov @r1,a
+        call xrom_next
+        mov r0,#level_start
+        mov @r0,a             ; preserve start across BIOS/VDC calls
+        mov r1,#mask_base
+        mov r2,#015h
+load_masks:
+        call xrom_next
+        mov r5,a
+        call extramenable
+        mov a,r5
+        anl a,#00fh
+        movx @r1,a
+        inc r1
+        mov a,r5
+        swap a
+        anl a,#00fh
+        movx @r1,a
+        inc r1
+        djnz r2,load_masks
+        ; Derive all grid walls from the movement masks. This compact format
+        ; keeps 31 7x6 levels below the XROM/program boundary at $0400.
+        sel mb1
+        call build_grid_from_masks
+        sel mb0
+        ; Convert an arbitrary 0-41 start cell into x/y by repeated /7.
+        mov r0,#level_start
+        mov a,@r0
+        mov r4,a
+        mov r6,#000h
+load_start_div7:
+        add a,#0f9h           ; subtract 7; carry means A was at least 7
+        jc load_start_more
+        add a,#007h           ; restore the 0-6 remainder
+        mov r5,a
+        jmp load_start_ready
+load_start_more:
+        inc r6
+        jmp load_start_div7
+load_start_ready:
+        mov r0,#cursor_pos
+        mov a,r4
+        mov @r0,a
+        mov r0,#cursor_x
+        mov a,r5
+        mov @r0,a
+        mov r0,#cursor_y
+        mov a,r6
+        mov @r0,a
+        call extramenable
+        mov r0,#state_base
+        mov a,#000h
+        movx @r0,a
+        mov a,r4
+        mov r0,a
+        mov a,#002h
+        movx @r0,a
+        ret
+
+xrom_next:
+        ; Read before advancing.  Advancing the high byte before reading low
+        ; address FFh used to fetch X+1FFh instead of X+0FFh (level 9's left
+        ; border is the first record byte that exposed this page-wrap bug).
+        mov r0,#work_lo
+        mov a,@r0
+        mov r7,a
+        mov r0,#work_hi
+        mov a,@r0
+        outl p2,a
+        ; Original game-40 XROM: P11 high, RAM and VDC deselected.
+        orl p1,#05ah
+        mov a,r7
+        mov r0,a
+        movx a,@r0
+        mov r5,a
+        ; BIOS/VDC/RAM helpers do not know about the game-40 XROM circuit.
+        anl p1,#0fdh
+        mov r0,#work_lo
+        mov a,@r0
+        inc a
+        mov @r0,a
+        jnz xrom_pointer_ready
+        inc r0
+        mov a,@r0
+        inc a
+        mov @r0,a
+xrom_pointer_ready:
+        mov a,r5
+        ret
+
+        org 07d0h
+boot:
+        ; Game-31/40 XROM is active at reset.  Disable it before BIOS setup.
+        anl p1,#0fdh
+        ; SELECT GAME uses our interrupt vectors before start has run. Keep the
+        ; maze raster timer inactive so the standard BIOS tune can finish.
+        sel rb1
+        mov r0,#mux_active
+        mov a,#000h
+        mov @r0,a
+        jmp selectgame
+
+clear_outer_grid:
+        call vdcenable
+        mov a,#000h
+        mov r0,#vdc_control
+        movx @r0,a            ; hide grid while all segments are rebuilt
+        mov r0,#0c0h          ; unused horizontal columns above rows 1-8
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        mov r0,#0c8h
+        movx @r0,a
+        mov r0,#0d0h          ; complete unused ninth horizontal row
+        mov r1,#009h
+clear_outer_h9:
+        movx @r0,a
+        inc r0
+        djnz r1,clear_outer_h9
+        mov r0,#0e0h          ; unused vertical columns around the maze
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        mov r0,#0e9h
+        movx @r0,a
+        ret
+
+        org 0800h
+add_level_score:
+        ; 100 points without a restart. Each restart costs five points,
+        ; with a floor of 10 points for a completed level.
+        mov r0,#level_hundred
+        mov a,@r0
+        jz score_add_reduced
+        mov r0,#score_hi       ; add 0100 packed BCD
+        mov a,@r0
+        add a,#001h
+        da a
+        mov @r0,a
+        sel mb0
+        ret
+score_add_reduced:
+        mov r0,#level_points
+        mov a,@r0
+        call add_score_bcd
+        sel mb0
+        ret
+
+penalize_restart:
+        mov r0,#level_hundred
+        mov a,@r0
+        jz restart_already_reduced
+        mov a,#000h
+        mov @r0,a
+        mov r0,#level_points
+        mov a,#095h            ; first restart: 100 -> 95
+        mov @r0,a
+        sel mb0
+        ret
+restart_already_reduced:
+        mov r0,#level_points
+        mov a,@r0
+        xrl a,#010h
+        jz restart_score_floor
+        mov a,@r0
+        add a,#095h            ; packed-BCD subtraction by five
+        da a
+        mov @r0,a
+restart_score_floor:
+        sel mb0
+        ret
+
+add_score_bcd:
+        mov r2,a
+        mov r0,#score_lo
+        mov a,@r0
+        add a,r2
+        da a
+        mov @r0,a
+        jc score_add_carry
+        ret
+score_add_carry:
+        inc r0
+        mov a,@r0
+        add a,#001h
+        da a
+        mov @r0,a
+        ret
+
+handle_invalid:
+        ; Invalid directions are ignored. Only a manual restart lowers score.
+        sel mb0
+        ret
+
+play_note:
+        mov r0,#sound_active
+        mov a,#001h
+        mov @r0,a
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov r0,#vdc_sound0
+        mov a,r2
+        movx @r0,a
+        inc r0
+        mov a,r3
+        movx @r0,a
+        inc r0
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,r5
+        movx @r0,a
+sound_wait:
+        sel mb0
+        call waitvsync
+        sel mb1
+        djnz r1,sound_wait
+        ret
+
+stop_sound:
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov r0,#vdc_soundctrl
+        mov a,#000h
+        movx @r0,a
+        mov r0,#sound_active
+        mov @r0,a
+        ret
+
+stop_bios_sound:
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov r0,#vdc_control
+        mov a,#000h
+        movx @r0,a            ; disable the pending BIOS sound interrupt
+        mov r0,#vdc_soundctrl
+        movx @r0,a
+        sel mb0
+        ret
+
+        org 0900h
+select_level_input:
+        sel mb0
+select_release_first:
+        call waitvsync
+        call scankey
+        anl a,#080h
+        jz select_release_first
+        mov r0,#select_timer
+        mov a,#096h            ; 150 PAL frames = three seconds
+        mov @r0,a
+select_second_wait:
+        call waitvsync
+        mov r1,#000h
+        call getjoystick
+        jf0 select_fire_pressed
+        call scankey
+        anl a,#080h
+        jz select_second_pressed
+        mov r0,#select_timer
+        mov a,@r0
+        dec a
+        mov @r0,a
+        jnz select_second_wait
+        mov r0,#selected_tens
+        mov a,@r0
+        jz select_invalid
+        mov r0,#selected_level
+        mov @r0,a
+        jmp select_launch
+select_fire_pressed:
+        ; Fire/space confirms the first digit immediately. This avoids the
+        ; three-second ambiguity timeout for levels 1-9 while preserving
+        ; two-digit entry for levels 10-31.
+        mov r0,#selected_tens
+        mov a,@r0
+        jz select_invalid
+        mov r0,#selected_level
+        mov @r0,a
+select_fire_release:
+        call waitvsync
+        mov r1,#000h
+        call getjoystick
+        jf0 select_fire_release
+        jmp select_launch
+select_second_pressed:
+        sel rb0
+        mov a,r7              ; scankey already captured the second digit
+        sel rb1
+        anl a,#00fh
+        mov r0,#selected_level
+        mov @r0,a
+
+        mov r0,#selected_tens
+        mov a,@r0
+        jz select_tens_zero
+        xrl a,#001h
+        jz select_level_valid
+        mov a,@r0
+        xrl a,#002h
+        jz select_level_valid
+        mov a,@r0
+        xrl a,#003h
+        jnz select_invalid
+        mov r0,#selected_level
+        mov a,@r0
+        jz select_level_valid
+        xrl a,#001h
+        jz select_level_valid
+        jmp select_invalid       ; only 30 and 31 exist in the 31-level game
+select_tens_zero:
+        mov r0,#selected_level
+        mov a,@r0
+        jz select_invalid
+select_level_valid:
+        mov r0,#selected_tens
+        mov a,@r0
+        swap a
+        mov r2,a
+        mov r0,#selected_level
+        mov a,@r0
+        orl a,r2
+        mov @r0,a
+select_launch:
+        sel rb1
+        sel mb0
+        ret
+select_invalid:
+        sel mb0
+        jmp selectgame
+
+sound_select_standard:
+        ; Exact five tone blocks used by BIOS tune_select (4Ah).
+        ; Make the final current cell use the same palette as all other cells.
+        sel mb0
+        call extramenable
+        sel mb1
+        mov r0,#cursor_pos
+        mov a,@r0
+        mov r0,a
+        mov a,#001h
+        movx @r0,a
+        mov a,#003h            ; red symbols + charset pointer high bit
+        mov r7,#042h           ; green walls
+        call set_celebration_colors
+        mov r2,#003h
+        mov r3,#0f0h
+        mov r4,#03fh
+        mov r5,#0cfh
+        mov r1,#005h
+        call play_note
+        mov a,#007h            ; yellow symbols + charset pointer high bit
+        mov r7,#044h           ; red walls
+        call set_celebration_colors
+        mov r2,#01ch
+        mov r3,#071h
+        mov r4,#0c7h
+        mov r5,#0cfh
+        mov r1,#005h
+        call play_note
+        mov a,#009h            ; blue symbols + charset pointer high bit
+        mov r7,#046h           ; yellow walls
+        call set_celebration_colors
+        mov r2,#003h
+        mov r3,#0f0h
+        mov r4,#03fh
+        mov r5,#0efh
+        mov r1,#005h
+        call play_note
+        mov a,#005h            ; green symbols + charset pointer high bit
+        mov r7,#041h           ; blue walls
+        call set_celebration_colors
+        mov r2,#01ch
+        mov r3,#071h
+        mov r4,#0c7h
+        mov r5,#0efh
+        mov r1,#005h
+        call play_note
+        mov a,#003h            ; red symbols; chars cannot use dark brown
+        mov r7,#006h           ; dark yellow grid = brown
+        call set_celebration_colors
+        mov r2,#055h
+        mov r3,#055h
+        mov r4,#055h
+        mov r5,#0efh
+        mov r1,#005h
+        call play_note
+        call stop_sound
+        sel mb0
+        ret
+
+set_celebration_colors:
+        mov r0,#visited_color
+        mov @r0,a
+        anl a,#00eh            ; char RGB bits 1-3
+        rl a
+        rl a
+        mov r1,a               ; shift to sprite RGB bits 3-5
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov r0,#spr0_ctrl+002h
+        mov a,r1
+        movx @r0,a
+        mov r0,#vdc_color
+        mov a,r7
+        movx @r0,a
+        ret
+
+        org 0a00h
+init_selected_level:
+        mov r0,#selected_level
+        mov a,@r0
+        mov r3,a
+        mov r0,#level_number
+        mov a,r3
+        mov @r0,a
+        mov a,r3
+        anl a,#00fh
+        mov r4,a
+        mov a,r3
+        swap a
+        anl a,#00fh
+        mov r2,a
+        rl a
+        mov r3,a
+        rl a
+        rl a
+        add a,r3
+        add a,r4
+        dec a
+        mov r2,a
+        mov r0,#record_lo
+        mov a,#000h
+        mov @r0,a
+        inc r0
+        mov @r0,a
+init_level_offset:
+        mov a,r2
+        jz init_level_done
+        mov r0,#record_lo
+        mov a,@r0
+        add a,#016h
+        mov @r0,a
+        jc init_level_carry
+init_level_next:
+        dec r2
+        jmp init_level_offset
+init_level_carry:
+        inc r0
+        mov a,@r0
+        inc a
+        mov @r0,a
+        jmp init_level_next
+init_level_done:
+        sel mb0
+        ret
+
+        org 0b00h
+draw_title:
+        ; AI-MAZE above the playfield. Standalone chars 0-5 supply the six
+        ; letters, chars 5-11 remain the maze raster group, and sprite 1 is '-'.
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov r4,#018h
+
+        mov r0,#char0_ctrl
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#028h
+        movx @r0,a
+        inc r0
+        mov r5,#020h           ; A
+        call title_putchar
+
+        mov r0,#char0_ctrl+004h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#038h            ; same 16-step letter spacing as MAZE
+        movx @r0,a
+        inc r0
+        mov r5,#016h           ; I
+        call title_putchar
+
+        mov r0,#char0_ctrl+008h
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#048h
+        movx @r0,a
+        inc r0
+        mov r5,#026h           ; M
+        call title_putchar
+
+        mov r0,#char0_ctrl+00ch
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#058h
+        movx @r0,a
+        inc r0
+        mov r5,#020h           ; A
+        call title_putchar
+
+        mov r0,#char4_ctrl
+        mov a,r4
+        movx @r0,a
+        inc r0
+        mov a,#068h
+        movx @r0,a
+        inc r0
+        mov r5,#021h           ; Z
+        call title_putchar
+
+        ; Sprite 2 supplies E so character 5 can become the seventh maze
+        ; object without raster-sharing the title itself.
+        mov r0,#spr2_shape
+        mov a,#07eh
+        movx @r0,a
+        inc r0
+        mov a,#006h
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        mov a,#03eh
+        movx @r0,a
+        inc r0
+        mov a,#006h
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        mov a,#07eh
+        movx @r0,a
+        inc r0
+        mov a,#000h
+        movx @r0,a
+
+        mov r0,#spr2_ctrl
+        mov a,#018h
+        movx @r0,a
+        inc r0
+        mov a,#078h
+        movx @r0,a
+        inc r0
+        mov a,#038h            ; bright white sprite, normal size
+        movx @r0,a
+
+        mov r0,#spr1_shape
+        mov a,#000h
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        mov a,#07eh
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        mov a,#000h
+        movx @r0,a
+        inc r0
+        movx @r0,a
+        inc r0
+        movx @r0,a
+
+        mov r0,#spr1_ctrl
+        mov a,#018h
+        movx @r0,a
+        inc r0
+        mov a,#040h
+        movx @r0,a
+        inc r0
+        mov a,#018h            ; yellow sprite, normal size
+        movx @r0,a
+        mov r7,#000h           ; joystick debounce state expected by main loop
+        sel mb0
+        ret
+
+title_putchar:
+        mov r6,#00eh           ; bright white title letters
+        sel mb0
+        call putchar23
+        sel mb1
+        ret
+
+        org 0bffh
+        db 000h
+
+        org 0c00h
+build_grid_from_masks:
+        ; Horizontal segments: seven columns, seven boundaries per column.
+        ; The source bits are shifted one place because the whole maze starts
+        ; on VDC grid row 1 rather than row 0.
+        mov r4,#000h           ; maze column
+        mov r1,#hgrid0
+grid_h_column:
+        mov r5,#000h           ; packed boundary bits
+        mov r6,#001h           ; current row bit
+        mov a,r4
+        add a,#mask_base
+        mov r7,a
+        mov r2,#006h
+grid_h_row:
+        sel mb0
+        call extramenable
+        sel mb1
+        mov a,r7
+        mov r0,a
+        movx a,@r0
+        mov r3,a               ; retain bottom-row mask after final pass
+        anl a,#001h            ; open upward?
+        jnz grid_h_open
+        mov a,r5
+        orl a,r6
+        mov r5,a
+grid_h_open:
+        mov a,r7
+        add a,#007h
+        mov r7,a
+        mov a,r6
+        rl a
+        mov r6,a
+        djnz r2,grid_h_row
+        mov a,r3
+        anl a,#004h            ; bottom boundary is closed downward
+        jnz grid_h_bottom_open
+        mov a,r5
+        orl a,r6
+        mov r5,a
+grid_h_bottom_open:
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov a,r5
+        rl a
+        movx @r1,a
+        inc r1
+        inc r4
+        mov a,r4
+        xrl a,#007h
+        jnz grid_h_column
+
+        ; Vertical segments: seven left boundaries plus a solid right edge.
+        mov r4,#000h
+        mov r1,#vgrid0
+grid_v_column:
+        mov r5,#000h
+        mov r6,#001h
+        mov a,r4
+        add a,#mask_base
+        mov r7,a
+        mov r2,#006h
+grid_v_row:
+        sel mb0
+        call extramenable
+        sel mb1
+        mov a,r7
+        mov r0,a
+        movx a,@r0
+        anl a,#008h            ; open to the left?
+        jnz grid_v_open
+        mov a,r5
+        orl a,r6
+        mov r5,a
+grid_v_open:
+        mov a,r7
+        add a,#007h
+        mov r7,a
+        mov a,r6
+        rl a
+        mov r6,a
+        djnz r2,grid_v_row
+        sel mb0
+        call vdcenable
+        sel mb1
+        mov a,r5
+        rl a
+        movx @r1,a
+        inc r1
+        inc r4
+        mov a,r4
+        xrl a,#007h
+        jnz grid_v_column
+        mov a,#07eh
+        movx @r1,a             ; solid right outer wall at VDC column 9
+        ret
+
+        org 0c80h
+start_dispatch:
+        sel rb1
+        mov r0,#selected_level
+        xrl a,#key_enter
+        jz start_enter
+        xrl a,#key_enter       ; restore the BIOS key number
+        anl a,#00fh
+        dec r0                 ; selected_tens is directly before selected_level
+        mov @r0,a
+        sel mb1
+        call select_level_input
+        jmp start_level_ready
+start_enter:
+        mov a,#001h
+        mov @r0,a              ; Enter on SELECT GAME starts level 1
+start_level_ready:
+        sel mb1
+        call init_selected_level
+        mov r0,#score_lo
+        mov a,#000h
+        mov @r0,a
+        inc r0
+        mov @r0,a
+        inc r0
+        mov @r0,a
+        call new_maze
+        sel mb0
+        jmp main_loop

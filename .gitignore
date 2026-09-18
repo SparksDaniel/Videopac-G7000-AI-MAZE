@@ -1,0 +1,14 @@
+*.p
+*.lst
+local_archive/
+*.bak
+*.tmp
+
+# Local emulator/firmware files must never be published.
+bios/
+o2em_def.cfg
+
+# Generated Windows/.NET output, should a local port be restored.
+**/bin/
+**/obj/
+**/publish/
