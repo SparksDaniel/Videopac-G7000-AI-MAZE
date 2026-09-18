@@ -59,6 +59,15 @@ set O2EM_DIR=C:\Emulators\o2em118win
 run_7x6_o2em118.cmd
 ```
 
+Alternatively, pass the full path to `o2em.exe` directly:
+
+```bat
+run_7x6_o2em118.cmd "C:\Emulators\o2em118win\o2em.exe"
+```
+
+The launcher also detects an `o2em118win` directory placed next to the script,
+or an `o2em.exe` available through Windows `PATH`.
+
 The launcher maps the arrow keys to movement and `Space` to the joystick
 button. Press `F8` in O2EM to save a numbered BMP snapshot in `docs/images`.
 

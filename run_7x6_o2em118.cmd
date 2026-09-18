@@ -5,10 +5,16 @@ set "GAME_ROM=%~dp0roms\ai-maze-42-31levels.rom"
 set "SCREENSHOT=%~dp0docs\images\ai-maze-snapshot@.bmp"
 set "O2EM_EXE="
 
+if not "%~1"=="" goto :use_o2em_argument
 if defined O2EM_DIR goto :use_configured_o2em
-if exist "C:\Projekt\VideopacG7000\o2em118win\o2em.exe" goto :use_local_o2em
+if exist "%~dp0o2em118win\o2em.exe" goto :use_local_o2em
 for %%I in (o2em.exe) do set "O2EM_EXE=%%~$PATH:I"
 if not defined O2EM_EXE goto :o2em_missing
+goto :launch
+
+:use_o2em_argument
+set "O2EM_EXE=%~1"
+if not exist "%O2EM_EXE%" goto :o2em_missing
 goto :launch
 
 :use_configured_o2em
@@ -17,7 +23,7 @@ if not exist "%O2EM_EXE%" goto :o2em_missing
 goto :launch
 
 :use_local_o2em
-set "O2EM_EXE=C:\Projekt\VideopacG7000\o2em118win\o2em.exe"
+set "O2EM_EXE=%~dp0o2em118win\o2em.exe"
 
 :launch
 if not exist "%GAME_ROM%" (
@@ -36,7 +42,7 @@ exit /b %O2EM_EXIT%
 
 :o2em_missing
 echo O2EM was not found.
-echo Set O2EM_DIR to the directory containing o2em.exe, for example:
-echo set O2EM_DIR=C:\Emulators\o2em118win
+echo Pass the full path to o2em.exe as the first argument, put O2EM on PATH,
+echo place o2em118win next to this script, or set O2EM_DIR.
 pause
 exit /b 1
