@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const WIDTH = 7, HEIGHT = 6, CELLS = WIDTH * HEIGHT;
-const RECORD_BYTES = 22, LEVELS = 31;
+const RECORD_BYTES = 22, LEVELS = 46;
 const ALL = (1n << BigInt(CELLS)) - 1n;
 const opposite = {1: 4, 2: 8, 4: 1, 8: 2};
 const bit = cell => 1n << BigInt(cell);
@@ -68,8 +68,8 @@ function solutionCount(masks, start) {
   return walk(start, bit(start));
 }
 
-const binName = process.argv[2] || path.join("roms", "levels_31_7x6.bin");
-const reportName = process.argv[3] || path.join("roms", "levels_31_7x6.txt");
+const binName = process.argv[2] || path.join("roms", "levels_46_7x6.bin");
+const reportName = process.argv[3] || path.join("roms", "levels_46_7x6.txt");
 const data = fs.readFileSync(binName);
 const lines = fs.readFileSync(reportName, "utf8").trim().split(/\r?\n/);
 if (data.length !== LEVELS * RECORD_BYTES)

@@ -1,18 +1,24 @@
 #!/usr/bin/env node
 "use strict";
 
-// Build 31 deterministic, verified 7x6 one-line puzzles. Each record is
-// one start cell followed by 21 packed movement-mask bytes. The cartridge
-// derives the VDC grid walls from these masks while loading a level.
+// Build 46 deterministic levels from an embedded 31-level seed set and 15
+// generated variants. Each record is one start cell followed by 21 packed
+// movement-mask bytes. The cartridge derives the VDC grid walls from these
+// masks while loading a level.
 const fs = require("fs");
 const path = require("path");
-const count = 31;
+const BASE_LEVELS = 31;
+const count = 46;
 const WIDTH = 7;
 const HEIGHT = 6;
 const CELLS = WIDTH * HEIGHT;
 const RECORD_BYTES = 1 + CELLS / 2;
 const ALL = (1n << BigInt(CELLS)) - 1n;
-let seed = 0x40c0ffee;
+const BASE_LEVEL_DATA = Buffer.from(
+  "F+bu7ny7v5/n/nxccf9d57//Pbu6mxnm7u58v//b13Tvfb//35f2fT26u5sY5u7uPL/f1/b+/32/eZ/3LP88u7qbEObO5lz3/9/3+111Lf/b1/bvPZuzmxnm7q54XffO99/XdT3/2/f+7z27u5sS5u6ufP+f1nX//n3//13X8/89i7ObF8Lm7mz/XZf3//tc1+eft/99PLq7mxGm7mh82uff5///PX3/3/b7PT2ru5oR5mjuPO+/39b3/l33/9/XdX09u7ubGObu7nxd15d1//88ff/f9vv/PYuTkxlkbO5c97/f9//+ff99n5e3/zy6upsY5u4sfP//3tfz33XP89+37/89urubEObu7nyf15f3+v88Lf/f1vbfNbu7mxnm7u58/3nb9+/vXff/3/e/PT2bspoS5u6ufJv33sf223X/j9f3//49u7ubEqbu7nz+/5/3n7c8//7e9r//Obu6ixfmbO58ff/f999xff/vn3V9fTy7u5sZ5u7uWPf7z/fv/3nf18P3/+89ObubGebuznS//9/X9v99/79d19f2PZuzmxDm7u58ff/b9z1tffv+34e3vz26upoQ5uruXOffl/d9/xz3n9f2//49u7ubGeZornzv/96X87997v/eNd/XNbq7mxnm7u58/31d87//bf943/fv/z27OZsY5u7ufP//2/P/72n/Hcf3//49ObubEIbm7nz++9917/89///f1vd9Pbs5mxem7u58+vvf56//fd/y3/fv/z05OZsXpu5sfP7/23X/bX2//9/X8v89q7ubF8bi7nzLdZ/n//9c95/X9//+PTm7mxfmru58ff7b9//PMf//z/a//z27upsY5izuXPf+2/f/733//9v3/+89m5OTEeZsznT//1n3/+99/79ddX3+Pbu7mw==",
+  "base64"
+);
+let seed = 0x46c0ffee;
 const rnd = n => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) % n);
 const cellBit = cell => 1n << BigInt(cell);
 const opposite = {1: 4, 2: 8, 4: 1, 8: 2};
@@ -112,6 +118,23 @@ function searchEffort(masks, start, limit = Infinity) {
 
 function solutionCount(masks, start, limit = 2) {
   return searchEffort(masks, start, limit).solutions;
+}
+
+function solutionPath(masks, start) {
+  const pathCells = [start];
+  function walk(cell, visited) {
+    if (visited === ALL) return true;
+    for (const next of legalMoves(masks, cell, visited)) {
+      const nextVisited = visited | cellBit(next);
+      if (!residualOK(masks, next, nextVisited)) continue;
+      pathCells.push(next);
+      if (walk(next, nextVisited)) return true;
+      pathCells.pop();
+    }
+    return false;
+  }
+  if (!walk(start, cellBit(start))) throw new Error(`No solution from cell ${start}`);
+  return pathCells;
 }
 
 function trapMetrics(masks, pathCells) {
@@ -246,50 +269,112 @@ function canonicalGraph(masks, start) {
   return forms.sort()[0];
 }
 
-const candidatePool = [], pathKeys = new Set(), graphKeys = new Set();
+function transformLevel(pathCells, masks, mode) {
+  const transformedMasks = Array(CELLS).fill(0);
+  for (let a = 0; a < CELLS; a++) for (const [b, bit] of neighbours(a)) {
+    if (a >= b || !(masks[a] & bit)) continue;
+    const ta = transformCell(a, mode), tb = transformCell(b, mode);
+    const edge = neighbours(ta).find(([next]) => next === tb);
+    if (!edge) throw new Error("Transformed edge is not orthogonal");
+    transformedMasks[ta] |= edge[1];
+    transformedMasks[tb] |= opposite[edge[1]];
+  }
+  return {
+    pathCells: pathCells.map(cell => transformCell(cell, mode)),
+    masks: transformedMasks
+  };
+}
+
 const qualifies = candidate => {
   const d = candidate.difficulty;
   return d.meaningful >= 5 && d.bins[1] >= 1 &&
     d.maxForcedGap <= 21 && d.uniqueStates >= 180 && d.score >= 211.8;
 };
-while (candidatePool.length < 64 ||
-      (candidatePool.filter(qualifies).length < count && candidatePool.length < 192)) {
-  const pathCells = makePath(), pathKey = canonicalPath(pathCells);
-  if (pathKeys.has(pathKey)) continue;
-  const {masks, extras, difficulty} = masksFor(pathCells);
-  const graphKey = canonicalGraph(masks, pathCells[0]);
-  if (graphKeys.has(graphKey)) continue;
-  pathKeys.add(pathKey); graphKeys.add(graphKey);
-  candidatePool.push({pathCells, masks, extras, difficulty});
-  if (!(candidatePool.length & 7))
-    console.log(`Analysed ${candidatePool.length} candidate levels...`);
+const baseData = BASE_LEVEL_DATA;
+if (baseData.length !== BASE_LEVELS * RECORD_BYTES)
+  throw new Error(`Expected ${BASE_LEVELS * RECORD_BYTES} base bytes, got ${baseData.length}`);
+
+function decodeMasks(data, level) {
+  const offset = level * RECORD_BYTES, masks = [];
+  for (let i = 1; i < RECORD_BYTES; i++) {
+    const packed = data[offset + i];
+    masks.push(packed & 15, packed >> 4);
+  }
+  return masks;
 }
-candidatePool.sort((a, b) =>
-  Number(qualifies(b)) - Number(qualifies(a)) ||
-  b.difficulty.score - a.difficulty.score);
 
-if (candidatePool.slice(0, count).some(candidate => !qualifies(candidate)))
-  throw new Error("Could not find 31 levels matching the 6x6 difficulty floor");
+function extraPassages(masks) {
+  let edges = 0;
+  for (let cell = 0; cell < CELLS; cell++)
+    for (const [next, bit] of neighbours(cell))
+      if (cell < next && (masks[cell] & bit)) edges++;
+  return edges - (CELLS - 1);
+}
 
-// Keep the same high-difficulty qualifying set, but present it as a steady
-// progression. Level 1 is the easiest selected candidate and level 31 the
-// hardest according to the generator's composite difficulty score.
-const selectedLevels = candidatePool.slice(0, count)
-  .sort((a, b) => a.difficulty.score - b.difficulty.score);
+const baseLevels = Array.from({length: BASE_LEVELS}, (_, level) => {
+  const masks = decodeMasks(baseData, level);
+  const start = baseData[level * RECORD_BYTES];
+  const pathCells = solutionPath(masks, start);
+  if (pathCells.length !== CELLS || pathCells[0] !== start || solutionCount(masks, start) !== 1)
+    throw new Error(`Base level ${level + 1}: invalid or non-unique`);
+  return {pathCells, masks, extras: extraPassages(masks), difficulty: difficultyOf(masks, pathCells)};
+});
 
-const records = [], report = [];
-for (let level = 0; level < count; level++) {
-  const {pathCells, masks, extras, difficulty} = selectedLevels[level];
+const baseReport = baseLevels.map(({pathCells, extras, difficulty}, level) =>
+  `${level + 1}: start=${pathCells[0]} extras=${extras} states=${difficulty.uniqueStates} meaningful=${difficulty.meaningful} bins=${difficulty.bins.join("/")} p25=${difficulty.trapP25.toFixed(1)} gap=${difficulty.maxForcedGap} turns=${difficulty.turns} run=${difficulty.maxRun} score=${difficulty.score.toFixed(1)} path=${pathCells.join(",")}`
+);
+const expertFloor = baseLevels.at(-1).difficulty.score;
+const graphKeys = new Set(baseLevels.map(level => canonicalGraph(level.masks, level.pathCells[0])));
+const expertLevels = [];
+const expertTarget = count - BASE_LEVELS;
+const expertPerSource = new Map();
+const expertSources = [30, 29, 28, 19]; // Seed levels 31, 30, 29 and 20.
+
+// Reuse the hardest solution paths but construct different maximal passage
+// graphs around them. A different graph means different walls and decisions;
+// every graph is independently checked for one and only one full solution.
+for (let round = 0; expertLevels.length < expertTarget && round < 96; round++) {
+  for (const source of expertSources) {
+    if (expertLevels.length >= expertTarget) break;
+    const sourceCount = expertPerSource.get(source) || 0;
+    if (sourceCount >= 12) continue;
+    const sourcePath = baseLevels[source].pathCells;
+    const generated = masksFor(sourcePath, 16);
+    const orientation = (expertLevels.length + round + source) & 3;
+    const transformed = transformLevel(sourcePath, generated.masks, orientation);
+    const candidate = {
+      pathCells: transformed.pathCells,
+      masks: transformed.masks,
+      extras: generated.extras,
+      difficulty: generated.difficulty,
+      sourceLevel: source + 1
+    };
+    const graphKey = canonicalGraph(candidate.masks, candidate.pathCells[0]);
+    if (!qualifies(candidate) ||
+        candidate.difficulty.score < expertFloor || graphKeys.has(graphKey)) continue;
+    graphKeys.add(graphKey);
+    expertLevels.push(candidate);
+    expertPerSource.set(source, sourceCount + 1);
+    console.log(`Expert ${expertLevels.length}/${expertTarget}: source=${source + 1} orientation=${orientation} score=${candidate.difficulty.score.toFixed(1)}`);
+  }
+}
+if (expertLevels.length !== expertTarget)
+  throw new Error(`Could only generate ${expertLevels.length} expert levels at score >= ${expertFloor.toFixed(1)}`);
+expertLevels.sort((a, b) => a.difficulty.score - b.difficulty.score);
+
+const records = [baseData], report = baseReport.slice();
+for (let level = 0; level < expertLevels.length; level++) {
+  const {pathCells, masks, extras, difficulty, sourceLevel} = expertLevels[level];
   if (solutionCount(masks, pathCells[0]) !== 1)
-    throw new Error(`Selected level ${level + 1} is not uniquely solvable`);
+    throw new Error(`Selected expert level ${BASE_LEVELS + level + 1} is not uniquely solvable`);
   const packed = [];
   for (let i = 0; i < CELLS; i += 2) packed.push(masks[i] | (masks[i + 1] << 4));
   if (packed.length + 1 !== RECORD_BYTES) throw new Error("Internal record-size error");
-  records.push(pathCells[0], ...packed);
-  report.push(`${level + 1}: start=${pathCells[0]} extras=${extras} states=${difficulty.uniqueStates} meaningful=${difficulty.meaningful} bins=${difficulty.bins.join("/")} p25=${difficulty.trapP25.toFixed(1)} gap=${difficulty.maxForcedGap} turns=${difficulty.turns} run=${difficulty.maxRun} score=${difficulty.score.toFixed(1)} path=${pathCells.join(",")}`);
+  records.push(Buffer.from([pathCells[0], ...packed]));
+  report.push(`${BASE_LEVELS + level + 1}: start=${pathCells[0]} source=${sourceLevel} extras=${extras} states=${difficulty.uniqueStates} meaningful=${difficulty.meaningful} bins=${difficulty.bins.join("/")} p25=${difficulty.trapP25.toFixed(1)} gap=${difficulty.maxForcedGap} turns=${difficulty.turns} run=${difficulty.maxRun} score=${difficulty.score.toFixed(1)} path=${pathCells.join(",")}`);
 }
-const out = process.argv[2] || "levels_31_7x6.bin";
-fs.writeFileSync(out, Buffer.from(records));
+const out = process.argv[2] || path.join("roms", "levels_46_7x6.bin");
+fs.writeFileSync(out, Buffer.concat(records));
 const reportOut = path.join(path.dirname(out), `${path.basename(out, path.extname(out))}.txt`);
 fs.writeFileSync(reportOut, report.join("\n") + "\n");
-console.log(`${out}: ${records.length} bytes, ${count} verified levels`);
+console.log(`${out}: ${count * RECORD_BYTES} bytes, ${count} verified levels`);

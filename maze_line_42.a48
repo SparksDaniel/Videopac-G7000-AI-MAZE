@@ -7,9 +7,9 @@
 
         cpu 8048
 
-        ; Compact XROM data area: 31 records x 22 bytes.
+        ; Compact XROM data area: 46 records x 22 bytes.
         org 0000h
-        incbin "roms/levels_31_7x6.bin"
+        incbin "roms/levels_46_7x6.bin"
 
 irq             equ 0009h
 vsyncirq        equ 001ah
@@ -701,7 +701,7 @@ render_continue:
 advance_level:
         mov r0,#level_number
         mov a,@r0
-        xrl a,#031h
+        xrl a,#046h
         jz advance_done
         mov a,@r0
         add a,#001h
@@ -754,7 +754,7 @@ load_masks:
         inc r1
         djnz r2,load_masks
         ; Derive all grid walls from the movement masks. This compact format
-        ; keeps 31 7x6 levels below the XROM/program boundary at $0400.
+        ; keeps 46 7x6 levels below the XROM/program boundary at $0400.
         sel mb1
         call build_grid_from_masks
         sel mb0
@@ -1005,11 +1005,12 @@ select_second_wait:
         jz select_invalid
         mov r0,#selected_level
         mov @r0,a
+        sel mb1
         jmp select_launch
 select_fire_pressed:
         ; Fire/space confirms the first digit immediately. This avoids the
         ; three-second ambiguity timeout for levels 1-9 while preserving
-        ; two-digit entry for levels 10-31.
+        ; two-digit entry for levels 10-46.
         mov r0,#selected_tens
         mov a,@r0
         jz select_invalid
@@ -1020,6 +1021,7 @@ select_fire_release:
         mov r1,#000h
         call getjoystick
         jf0 select_fire_release
+        sel mb1
         jmp select_launch
 select_second_pressed:
         sel rb0
@@ -1039,13 +1041,16 @@ select_second_pressed:
         jz select_level_valid
         mov a,@r0
         xrl a,#003h
+        jz select_level_valid
+        mov a,@r0
+        xrl a,#004h
         jnz select_invalid
         mov r0,#selected_level
         mov a,@r0
-        jz select_level_valid
-        xrl a,#001h
-        jz select_level_valid
-        jmp select_invalid       ; only 30 and 31 exist in the 31-level game
+        add a,#0f9h             ; units 0-6 are valid; 7-9 set carry
+        jc select_invalid
+        sel mb1
+        jmp select_level_valid
 select_tens_zero:
         mov r0,#selected_level
         mov a,@r0
@@ -1442,6 +1447,7 @@ start_dispatch:
         mov @r0,a
         sel mb1
         call select_level_input
+        sel mb1                  ; selector returns with MB0 selected
         jmp start_level_ready
 start_enter:
         mov a,#001h

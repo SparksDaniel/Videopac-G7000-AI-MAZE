@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "GAME_ROM=%~dp0roms\ai-maze-42-31levels.rom"
+set "GAME_ROM=%~dp0roms\ai-maze-42-46levels.rom"
 set "SCREENSHOT=%~dp0docs\images\ai-maze-snapshot@.bmp"
 set "O2EM_EXE="
 

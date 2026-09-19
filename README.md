@@ -6,8 +6,7 @@
 and Magnavox Odyssey². Guide the marker through every cell of a 7×6 maze
 without visiting a cell twice.
 
-The cartridge contains 31 deterministic and uniquely solvable levels. The
-selected mazes are ordered by the generator's composite difficulty score.
+The cartridge contains 46 deterministic and uniquely solvable levels.
 
 ## Development
 
@@ -32,11 +31,11 @@ The complete Intel 8048 game source is available in
   five points, down to a minimum of 10.
 - Completing a level plays a five-tone fanfare and advances to the next one.
 
-At `SELECT GAME`, type a level number from 1 to 31. A single-digit level can
+At `SELECT GAME`, type a level number from 1 to 46. A single-digit level can
 be confirmed with the joystick button; `Enter` starts level 1 immediately.
 
 The ready-to-run cartridge image is
-[`roms/ai-maze-42-31levels.rom`](roms/ai-maze-42-31levels.rom).
+[`roms/ai-maze-42-46levels.rom`](roms/ai-maze-42-46levels.rom).
 
 ## Build
 
@@ -47,7 +46,7 @@ included in this repository. On Windows, run:
 build_maze_line_42.cmd
 ```
 
-The script regenerates and verifies all 31 levels, assembles the cartridge,
+The script regenerates and verifies all 46 levels, assembles the cartridge,
 and checks that the resulting ROM is exactly 4096 bytes.
 
 The console BIOS is **not** required to build the cartridge ROM.
@@ -55,8 +54,8 @@ The console BIOS is **not** required to build the cartridge ROM.
 For a quicker verification without regenerating the levels:
 
 ```bat
-node tools\verify_maze_levels_42.js roms\levels_31_7x6.bin roms\levels_31_7x6.txt
-node tools\assemble.js maze_line_42.a48 roms\ai-maze-42-31levels.rom --4k
+node tools\verify_maze_levels_42.js roms\levels_46_7x6.bin roms\levels_46_7x6.txt
+node tools\assemble.js maze_line_42.a48 roms\ai-maze-42-46levels.rom --4k
 ```
 
 ## Running in O2EM 1.18
@@ -96,8 +95,8 @@ configuration has not been tested.
 ## Repository contents
 
 - [`maze_line_42.a48`](maze_line_42.a48) — Intel 8048 source code.
-- [`roms/levels_31_7x6.bin`](roms/levels_31_7x6.bin) — packed level data used by the cartridge.
-- [`roms/levels_31_7x6.txt`](roms/levels_31_7x6.txt) — level metrics and solution paths.
+- `roms/levels_46_7x6.bin` — packed level data used by the 46-level cartridge.
+- `roms/levels_46_7x6.txt` — level metrics and solution paths.
 - [`tools/generate_maze_levels_42.js`](tools/generate_maze_levels_42.js) — deterministic level generator.
 - [`tools/verify_maze_levels_42.js`](tools/verify_maze_levels_42.js) — structural and unique-solution verifier.
 - [`tools/assemble.js`](tools/assemble.js) — two-pass assembler used by the build.

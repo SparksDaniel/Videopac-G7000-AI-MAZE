@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 
-// Reorder an already generated 31-level set by the generator's reported
+// Reorder an already generated 46-level set by the generator's reported
 // difficulty without spending several minutes regenerating identical levels.
 
 const fs = require("fs");
 const path = require("path");
 
-const LEVELS = 31, RECORD_BYTES = 22;
-const binName = process.argv[2] || path.join("roms", "levels_31_7x6.bin");
-const reportName = process.argv[3] || path.join("roms", "levels_31_7x6.txt");
+const BASE_LEVELS = 31, LEVELS = 46, RECORD_BYTES = 22;
+const binName = process.argv[2] || path.join("roms", "levels_46_7x6.bin");
+const reportName = process.argv[3] || path.join("roms", "levels_46_7x6.txt");
 const data = fs.readFileSync(binName);
 const lines = fs.readFileSync(reportName, "utf8").trim().split(/\r?\n/);
 
@@ -29,9 +29,12 @@ const levels = lines.map((line, index) => {
   };
 });
 
-levels.sort((a, b) => a.difficulty - b.difficulty || a.originalIndex - b.originalIndex);
-fs.writeFileSync(binName, Buffer.concat(levels.map(level => level.record)));
+const baseLevels = levels.slice(0, BASE_LEVELS);
+const expertLevels = levels.slice(BASE_LEVELS)
+  .sort((a, b) => a.difficulty - b.difficulty || a.originalIndex - b.originalIndex);
+const sortedLevels = baseLevels.concat(expertLevels);
+fs.writeFileSync(binName, Buffer.concat(sortedLevels.map(level => level.record)));
 fs.writeFileSync(reportName,
-  levels.map((level, index) => level.line.replace(/^\d+:/, `${index + 1}:`)).join("\n") + "\n");
+  sortedLevels.map((level, index) => level.line.replace(/^\d+:/, `${index + 1}:`)).join("\n") + "\n");
 
-console.log(`${binName}: sorted ${LEVELS} levels from ${levels[0].difficulty.toFixed(1)} to ${levels.at(-1).difficulty.toFixed(1)}`);
+console.log(`${binName}: preserved levels 1-${BASE_LEVELS} and sorted expert levels ${BASE_LEVELS + 1}-${LEVELS}`);
